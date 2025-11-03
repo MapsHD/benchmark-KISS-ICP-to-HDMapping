@@ -391,7 +391,7 @@ int main(int argc, char **argv)
             // auto pose = worker_data_concatenated[i].intermediate_trajectory[0].inverse() * worker_data_concatenated[i].intermediate_trajectory[j];
 
             outfile
-                << std::setprecision(20) << chunks_trajectory[i][j].timestamp_ns * 1e9 << " " << std::setprecision(10)
+                << std::setprecision(20) << chunks_trajectory[i][j].timestamp_ns * 1e6 << " " << std::setprecision(10)
 
                 << pose(0, 0) << " "
                 << pose(0, 1) << " "
@@ -413,7 +413,7 @@ int main(int argc, char **argv)
                 // << chunks_trajectory[i][j].qx << " "   // qx
                 // << chunks_trajectory[i][j].qy << " "   // qy
                 // << chunks_trajectory[i][j].qz << " "   // qz
-                << std::setprecision(20) << chunks_trajectory[i][j].timestamp_ns * 1e9 << " " << std::setprecision(10)
+                << std::setprecision(20) << chunks_trajectory[i][j].timestamp_ns * 1e6 << " " << std::setprecision(10)
                 << std::endl;
         }
         outfile.close();
