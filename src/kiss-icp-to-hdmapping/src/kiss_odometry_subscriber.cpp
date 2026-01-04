@@ -1,10 +1,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include <sensor_msgs/point_cloud2_iterator.hpp>
-#include "pcl/point_cloud.h"
-#include "pcl/point_types.h"
 #include "nav_msgs/msg/odometry.hpp"
-#include "pcl/conversions.h"
 #include <fstream> 
 #include <iostream>
 #include <string>
@@ -14,8 +11,9 @@
 #include "rosbag2_cpp/reader.hpp"
 #include "rclcpp/serialization.hpp"
 #include "laz_writer.hpp"
-
-
+#include <tf2_ros/buffer.h>
+#include <tf2_msgs/msg/tf_message.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 struct TrajectoryPose
 {
     double timestamp_ns;
@@ -66,6 +64,7 @@ bool save_poses(const std::string file_name, std::vector<Eigen::Affine3d> m_pose
 
 int main(int argc, char **argv)
 {
+    using namespace std::chrono_literals;
     if (argc < 3)
     {
         std::cout << "Usage: " << argv[0] << " <input_bag> <output_directory>" << std::endl;
@@ -79,13 +78,42 @@ int main(int argc, char **argv)
 
     std::cout << "Processing bag: " << input_bag << std::endl;
     rosbag2_cpp::Reader bag;
-  
+    auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+    tf2_ros::Buffer buffer(clock, tf2::Duration(24h));
     bag.open(input_bag);
-  
+
+    // fill tf buffer
+    int num_tf_msgs = 0;
+    while (bag.has_next()) {
+        auto bag_msg = bag.read_next();
+
+        if (bag_msg->topic_name != "/tf" && bag_msg->topic_name != "/tf_static")
+            continue;
+
+        auto tf_msg = std::make_shared<tf2_msgs::msg::TFMessage>();
+        rclcpp::SerializedMessage serialized_msg(*bag_msg->serialized_data);
+        rclcpp::Serialization<tf2_msgs::msg::TFMessage> serializer;
+        serializer.deserialize_message(&serialized_msg, tf_msg.get());
+
+        bool is_static = (bag_msg->topic_name == "/tf_static");
+
+        for (auto &tf : tf_msg->transforms) {
+            try {
+                buffer.setTransform(tf, "rosbag_loader", is_static);
+                num_tf_msgs++;
+            } catch (const tf2::TransformException &ex) {
+                RCLCPP_ERROR(rclcpp::get_logger("KissFrame"), "Failed to set TF: %s", ex.what());
+            }
+        }
+    }
+    RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Filed tf buffer with %d messages", num_tf_msgs);
+
+    // wind the bag to begin
+    bag.seek(0);
     while (bag.has_next())
     {
         rosbag2_storage::SerializedBagMessageSharedPtr msg = bag.read_next();
-        std::string kiss_frame_topic = "/kiss/local_map";
+        std::string kiss_frame_topic = "/kiss/frame";
         if (msg->topic_name == kiss_frame_topic) {
             RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Received message on topic: %s", kiss_frame_topic.c_str());
         
@@ -98,44 +126,54 @@ int main(int argc, char **argv)
                 RCLCPP_ERROR(rclcpp::get_logger("KissFrame"), "Error: Empty PointCloud2 message!");
                 return 1;
             }
-    
-            pcl::PointCloud<pcl::PointXYZ> cloud;
-            size_t num_points = cloud_msg->width * cloud_msg->height;
-            // uint8_t* data_ptr = cloud_msg->data.data();
-    
-            RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Processing %zu points", num_points);
-            
-            sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud_msg, "x");
-            sensor_msgs::PointCloud2ConstIterator<float> iter_y(*cloud_msg, "y");
-            sensor_msgs::PointCloud2ConstIterator<float> iter_z(*cloud_msg, "z");
 
-            for (size_t i = 0; i < num_points; ++i, ++iter_x, ++iter_y, ++iter_z)
-            {
-                pcl::PointXYZ point;
-                point.x = *iter_x;
-                point.y = *iter_y;
-                point.z = *iter_z;
-            
-                cloud.points.push_back(point);
-            
-                Point3Di point_global;
-            
-                if (cloud_msg->header.stamp.sec != 0 || cloud_msg->header.stamp.nanosec != 0)
+            const size_t num_points = cloud_msg->width * cloud_msg->height;
+            const auto timestamp = cloud_msg->header.stamp;
+            const auto livox_frame_id = cloud_msg->header.frame_id;
+
+            // get tf from buffer
+            try {
+                const auto transform =  buffer.lookupTransform("odom_lidar", livox_frame_id, timestamp);
+
+                tf2::Transform tf;
+                tf2::fromMsg(transform.transform, tf);
+
+                RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Processing %zu points", num_points);
+
+                sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud_msg, "x");
+                sensor_msgs::PointCloud2ConstIterator<float> iter_y(*cloud_msg, "y");
+                sensor_msgs::PointCloud2ConstIterator<float> iter_z(*cloud_msg, "z");
+
+                for (size_t i = 0; i < num_points; ++i, ++iter_x, ++iter_y, ++iter_z)
                 {
-                    uint64_t sec_in_ms = static_cast<uint64_t>(cloud_msg->header.stamp.sec) * 1000ULL;
-                    uint64_t ns_in_ms = static_cast<uint64_t>(cloud_msg->header.stamp.nanosec) / 1'000'000ULL;
-                    point_global.timestamp = sec_in_ms + ns_in_ms;
+                    const tf2::Vector3 p_in(*iter_x, *iter_y, *iter_z);
+                    // transform point
+                    tf2::Vector3 p_out = tf * p_in;
+
+
+                    Point3Di point_global;
+
+                    if (cloud_msg->header.stamp.sec != 0 || cloud_msg->header.stamp.nanosec != 0)
+                    {
+                        uint64_t sec_in_ms = static_cast<uint64_t>(cloud_msg->header.stamp.sec) * 1000ULL;
+                        uint64_t ns_in_ms = static_cast<uint64_t>(cloud_msg->header.stamp.nanosec) / 1'000'000ULL;
+                        point_global.timestamp = sec_in_ms + ns_in_ms;
+                    }
+
+                    point_global.point = Eigen::Vector3d( p_out.x(), p_out.y(), p_out.z());
+                    point_global.intensity = 0;
+                    point_global.index_pose = static_cast<int>(i);
+                    point_global.lidarid = 0;
+                    point_global.index_point = static_cast<int>(i);
+
+                    points_global.push_back(point_global);
                 }
-            
-                point_global.point = Eigen::Vector3d(point.x, point.y, point.z);
-                point_global.intensity = 0;  
-                point_global.index_pose = static_cast<int>(i);
-                point_global.lidarid = 0;
-                point_global.index_point = static_cast<int>(i);
-            
-                points_global.push_back(point_global);
+
+                RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Processed %zu points, global size %zu!", num_points, points_global.size());
             }
-	    RCLCPP_INFO(rclcpp::get_logger("KissFrame"), "Processed %zu points!", cloud.points.size());
+            catch (tf2::TransformException &ex) {
+                RCLCPP_ERROR(rclcpp::get_logger("KissFrame"), "Failed to lookup transform: %s", ex.what());
+            }
         }
         
         if (msg->topic_name == "/kiss/odometry") {
@@ -221,7 +259,7 @@ int main(int argc, char **argv)
     int counter = 0;
     std::vector<Point3Di> chunk;
 
-    for (int i = 0; i < points_global.size(); i++)
+    for (size_t i = 0; i < points_global.size(); i++)
     {
         chunk.push_back(points_global[i]);
 
@@ -250,12 +288,12 @@ int main(int argc, char **argv)
     std::cout << "start indexing chunks_trajectory" << std::endl;
     chunks_trajectory.resize(chunks_pc.size());
 
-    for (int i = 0; i < trajectory.size(); i++)
+    for (size_t i = 0; i < trajectory.size(); i++)
     {
         if(i % 1000 == 0){
             std::cout << "computing [" << i + 1 << "] of: " << trajectory.size() << std::endl;
         }
-        for (int j = 0; j < chunks_pc.size(); j++)
+        for (size_t j = 0; j < chunks_pc.size(); j++)
         {
             if (chunks_pc[j].size() > 0)
             {
@@ -275,7 +313,7 @@ int main(int argc, char **argv)
 
     /////////////////////////
     std::cout << "start transforming chunks_pc to local coordinate system" << std::endl;
-    for (int i = 0; i < chunks_pc.size(); i++)
+    for (size_t i = 0; i < chunks_pc.size(); i++)
     {
         std::cout << "computing [" << i + 1 << "] of: " << chunks_pc.size() << std::endl;
         // auto m_inv = chunks_trajectory[i][0].
@@ -321,9 +359,9 @@ int main(int argc, char **argv)
 
     Eigen::Vector3d offset(0, 0, 0); // --obliczyc
     int cc = 0;
-    for (int i = 0; i < chunks_trajectory.size(); i++)
+    for (size_t i = 0; i < chunks_trajectory.size(); i++)
     {
-        for (int j = 0; j < chunks_trajectory[i].size(); j++)
+        for (size_t j = 0; j < chunks_trajectory[i].size(); j++)
         {
             Eigen::Vector3d trans_curr(chunks_trajectory[i][j].x_m, chunks_trajectory[i][j].y_m, chunks_trajectory[i][j].z_m);
             offset += trans_curr;
@@ -336,7 +374,7 @@ int main(int argc, char **argv)
         m_poses;
     std::vector<std::string> file_names;
 
-    for (int i = 0; i < chunks_pc.size(); i++)
+    for (size_t i = 0; i < chunks_pc.size(); i++)
     {
         if (chunks_pc[i].size() == 0){
             continue;
@@ -378,7 +416,7 @@ int main(int argc, char **argv)
         Eigen::Affine3d first_affine_inv = first_affine.inverse();
         m_poses.push_back(first_affine);
 
-        for (int j = 0; j < chunks_trajectory[i].size(); j++)
+        for (size_t j = 0; j < chunks_trajectory[i].size(); j++)
         {
             Eigen::Vector3d trans_curr(chunks_trajectory[i][j].x_m, chunks_trajectory[i][j].y_m, chunks_trajectory[i][j].z_m);
             Eigen::Quaterniond q_curr(chunks_trajectory[i][j].qw, chunks_trajectory[i][j].qx, chunks_trajectory[i][j].qy, chunks_trajectory[i][j].qz);
@@ -452,7 +490,7 @@ int main(int argc, char **argv)
     jj["Session Settings"] = j;
 
     nlohmann::json jlaz_file_names;
-    for (int i = 0; i < chunks_pc.size(); i++)
+    for (size_t i = 0; i < chunks_pc.size(); i++)
     {
         if (chunks_pc[i].size() == 0)
         {

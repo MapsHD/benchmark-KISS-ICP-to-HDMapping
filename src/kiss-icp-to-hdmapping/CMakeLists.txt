@@ -11,12 +11,14 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(PCL REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+
 
 set(EXTERNAL_LIBRARIES_DIRECTORY src/3rdparty)
 
@@ -39,14 +41,14 @@ endif ()
 add_executable(listener src/kiss_odometry_subscriber.cpp src/laz_writer.cpp)
 
 target_link_libraries(
-  listener laszip
+  listener laszip Eigen3::Eigen
 )
 
 target_include_directories(
   listener
   PRIVATE ${LASZIP_INCLUDE_DIR}/LASzip/include)
 
-ament_target_dependencies(listener rclcpp nav_msgs geometry_msgs sensor_msgs PCL rosbag2_cpp)
+ament_target_dependencies(listener rclcpp nav_msgs geometry_msgs sensor_msgs rosbag2_cpp tf2_ros tf2_geometry_msgs)
 
 
 
