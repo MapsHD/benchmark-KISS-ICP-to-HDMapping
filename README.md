@@ -6,19 +6,8 @@ Download the dataset `reg-1.bag` by clicking [link](https://cloud.cylab.be/publi
 File 'reg-1.bag-pc.bag' is an input for further calculations.
 It should be located in '~/hdmapping-benchmark/data'.
 
-We now convert data from ROS1 to ROS2
-
-```shell
-docker run -it -v ~/hdmapping-benchmark/data:/data --user 1000:1000 kiss-icp_humble /bin/bash
-cd /data
-rosbags-convert --src reg-1.bag-pc.bag --dst reg-1-ros2 
-```
-
-close terminal
-
 ## Step 2 (prepare docker)
-
-open new terminal
+Run following commands in terminal
 
 ```shell
 mkdir -p ~/hdmapping-benchmark
@@ -29,7 +18,20 @@ git checkout Bunker-DVI-Dataset-reg-1
 docker build -t kiss-icp_humble .
 ```
 
-## Step 3 (run docker, file 'reg-1-ros2' should be in '~/hdmapping-benchmark/data')
+## Step 3 (Convert data)
+We now convert data from ROS1 to ROS2
+
+```shell
+docker run -it -v ~/hdmapping-benchmark/data:/data --user 1000:1000 kiss-icp_humble /bin/bash
+cd /data
+rosbags-convert --src reg-1.bag-pc.bag --dst reg-1-ros2 
+```
+
+close terminal
+
+## Step 4 (run docker, file 'reg-1-ros2' should be in '~/hdmapping-benchmark/data')
+open new terminal
+
 ```shell
 cd ~/hdmapping-benchmark/benchmark-KISS-ICP-to-HDMapping
 chmod +x docker_session_run-ros2-kiss-icp.sh 
@@ -37,7 +39,7 @@ cd ~/hdmapping-benchmark/data
 ~/hdmapping-benchmark/benchmark-KISS-ICP-to-HDMapping/docker_session_run-ros2-kiss-icp.sh reg-1-ros2 .
 ```
 
-## Step 4 (Open and visualize data)
+## Step 5 (Open and visualize data)
 Expected data should appear in ~/hdmapping-benchmark/data/output_hdmapping-kiss
 Use tool [multi_view_tls_registration_step_2](https://github.com/MapsHD/HDMapping) to open session.json from ~/hdmapping-benchmark/data/output_hdmapping-kiss.
 
