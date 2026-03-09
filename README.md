@@ -5,7 +5,7 @@ Download the dataset `kitti_seq00_ros2.zip` by clicking [link](https://huggingfa
 
 ### Extract the dataset
 
-Folder `kitti_seq00_ros2.zip`
+Folder `kitti_seq00_ros2.zip` is an input for further calculations.
 
 ```shell
 unzip kitti_seq00_ros2.zip
