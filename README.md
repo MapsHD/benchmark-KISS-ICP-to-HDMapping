@@ -5,12 +5,12 @@ Download the dataset `kitti_seq00_ros2.zip` by clicking [link](https://huggingfa
 
 ### Extract the dataset
 
-Folder `kitti_seq00_ros2.zip` is an input for further calculations.
+Folder `kitti_seq00_ros2.zip`.
 
 ```shell
 unzip kitti_seq00_ros2.zip
 ```
-After extraction, the folder name will be `kitti_seq00_ros2` (without the `.zip` extension).
+After extraction, the folder name will be `kitti_seq00_ros2`  is an input for further calculations. (without the `.zip` extension).
 
 It should be located in `~/hdmapping-benchmark/data`.  
 
